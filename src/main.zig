@@ -37,10 +37,11 @@ pub fn main() !void {
     const bytesRead = try inputfile.read(input);
     try std.testing.expect(bytesRead == size);
 
-    var parser = Parser.init(input);
+    var parser = try Parser.init(input, allocator);
+    defer parser.deinit();
 
     while (true) {
-        const token = try parser.next_token();
+        const token = try parser.next();
         std.log.info("{any}", .{token.kind});
         if (token.kind == .EOF) {
             break;
