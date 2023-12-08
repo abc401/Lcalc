@@ -4,6 +4,8 @@ const File = std.fs.File;
 
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 
+pub const LOGGING = false;
+
 fn usage(file: File) !void {
     _ = try file.write("Usage:\n");
     _ = try file.write("    <exename> <inputfile>\n");
@@ -13,8 +15,8 @@ pub fn main() !void {
     const stderr = std.io.getStdErr();
     const stdout = std.io.getStdOut();
 
-    _ = try stdout.write("Begin\n\n");
-    defer _ = stdout.write("\n\nEnd\n") catch 0;
+    _ = try stdout.write("\nBegin\n\n");
+    defer _ = stdout.write("\nEnd\n") catch 0;
 
     const allocator = gpa.allocator();
     const args = try std.process.argsAlloc(allocator);
@@ -46,7 +48,7 @@ pub fn main() !void {
             break;
         };
         const writer = stdout.writer();
-        try expr.write(writer);
+        try expr.serialize(writer);
 
         if ((try _parser.next()).kind == .EOF) {
             break;
