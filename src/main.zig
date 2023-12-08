@@ -1,5 +1,5 @@
 const std = @import("std");
-const Parser = @import("parser.zig").Parser;
+const parser = @import("parser.zig");
 const File = std.fs.File;
 
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -13,8 +13,8 @@ pub fn main() !void {
     const stderr = std.io.getStdErr();
     const stdout = std.io.getStdOut();
 
-    _ = try stdout.write("\n");
-    defer _ = stdout.write("\n") catch 0;
+    _ = try stdout.write("Begin\n\n");
+    defer _ = stdout.write("\n\nEnd\n") catch 0;
 
     const allocator = gpa.allocator();
     const args = try std.process.argsAlloc(allocator);
@@ -37,13 +37,18 @@ pub fn main() !void {
     const bytesRead = try inputfile.read(input);
     try std.testing.expect(bytesRead == size);
 
-    var parser = try Parser.init(input, allocator);
-    defer parser.deinit();
+    var tokenList = std.ArrayList(parser.Token).init(allocator);
+    var _parser = try parser.Parser.init(input, tokenList, allocator);
+    defer _parser.deinit();
 
     while (true) {
-        const token = try parser.next();
-        std.log.info("{any}", .{token.kind});
-        if (token.kind == .EOF) {
+        const expr = if (try _parser.expr()) |expr| expr else {
+            break;
+        };
+        const writer = stdout.writer();
+        try expr.write(writer);
+
+        if ((try _parser.next()).kind == .EOF) {
             break;
         }
     }
