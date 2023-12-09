@@ -49,12 +49,119 @@ const Application = struct {
     to: *Expression,
 };
 
-const Expression = union(enum) {
+pub const Expression = union(enum) {
     Identifier: Identifier,
     Abstraction: Abstraction,
     Application: Application,
 
     const Self = @This();
+
+    pub fn init(allocator: Allocator) !*Self {
+        return try allocator.create(Self);
+    }
+
+    pub fn deinit(self: *Self, allocator: Allocator) void {
+        switch (self.*) {
+            .Identifier => {
+                allocator.destroy(self);
+            },
+            .Abstraction => |abs| {
+                const over = abs.over;
+                defer over.deinit();
+
+                allocator.destroy(self);
+            },
+            .Application => |app| {
+                const of = app.of;
+                defer of.deinit();
+
+                const to = app.to;
+                defer to.deinit();
+
+                allocator.destroy(self);
+            },
+        }
+    }
+
+    pub fn deep_copy(self: *Self, allocator: Allocator) !*Self {
+        switch (self.*) {
+            .Identifier => {
+                const ident = try allocator.create(Self);
+                ident.* = self.*;
+                return ident;
+            },
+            .Abstraction => |abs| {
+                const new_abs = try allocator.create(Self);
+                new_abs.* = .{ .Abstraction = .{
+                    .of = abs.of,
+                    .over = try abs.over.deep_copy(allocator),
+                } };
+                return new_abs;
+            },
+            .Application => |app| {
+                const new_app = try allocator.create(Self);
+                new_app.* = .{ .Application = .{
+                    .of = try app.of.deep_copy(allocator),
+                    .to = try app.to.deep_copy(allocator),
+                } };
+                return new_app;
+            },
+        }
+    }
+
+    fn replace(self: *Self, target: []const u8, with: *Expression, allocator: Allocator) !*Expression {
+        switch (self.*) {
+            .Identifier => |ident| {
+                if (std.mem.eql(u8, ident, target)) {
+                    return try with.deep_copy(allocator);
+                } else {
+                    return try self.deep_copy(allocator);
+                }
+            },
+            .Abstraction => |abs| {
+                const replaced = try abs.over.replace(target, with, allocator);
+                const result = try allocator.create(Self);
+                result.* = .{ .Abstraction = .{
+                    .of = abs.of,
+                    .over = replaced,
+                } };
+                return result;
+            },
+            .Application => |app| {
+                const of_replaced = try app.of.replace(target, with, allocator);
+                const to_replaced = try app.to.replace(target, with, allocator);
+                const result = try allocator.create(Self);
+                result.* = .{ .Application = .{
+                    .of = of_replaced,
+                    .to = to_replaced,
+                } };
+                return result;
+            },
+        }
+    }
+
+    pub fn beta_reduce(self: *Self, allocator: Allocator) !*Expression {
+        switch (self.*) {
+            .Application => |app| {
+                switch (app.of.*) {
+                    .Abstraction => |abs| {
+                        return try abs.over.replace(abs.of, app.to, allocator);
+                    },
+                    else => {
+                        const reduced = try allocator.create(Self);
+                        reduced.* = .{ .Application = .{
+                            .of = try app.of.beta_reduce(allocator),
+                            .to = try app.to.beta_reduce(allocator),
+                        } };
+                        return reduced;
+                    },
+                }
+            },
+            else => {
+                return try self.deep_copy(allocator);
+            },
+        }
+    }
 
     pub fn write(self: *const Self, writer: Writer) !void {
         try self.write_aux(&writer);
@@ -68,18 +175,21 @@ const Expression = union(enum) {
     fn write_aux(self: *const Self, writer: *const Writer) !void {
         switch (self.*) {
             .Identifier => |lexeme| {
-                _ = try writer.print("{s}", .{lexeme});
+                _ = try writer.print("({s})", .{lexeme});
             },
             .Abstraction => |abstraction| {
-                _ = try writer.write("\\");
+                _ = try writer.write("(\\");
                 _ = try writer.print("{s}", .{abstraction.of});
                 _ = try writer.write(". ");
                 _ = try abstraction.over.write_aux(writer);
+                _ = try writer.write(")");
             },
             .Application => |application| {
+                _ = try writer.write("(");
                 _ = try application.of.write_aux(writer);
                 _ = try writer.write(" ");
                 _ = try application.to.write_aux(writer);
+                _ = try writer.write(")");
             },
         }
     }

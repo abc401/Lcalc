@@ -47,8 +47,11 @@ pub fn main() !void {
         const expr = if (try _parser.expr()) |expr| expr else {
             break;
         };
+
         const writer = stdout.writer();
         try expr.serialize(writer);
+        const beta_reduced = try expr.beta_reduce(allocator);
+        try beta_reduced.write(writer);
 
         if ((try _parser.next()).kind == .EOF) {
             break;
