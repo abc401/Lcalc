@@ -1,8 +1,11 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Writer = std.fs.File.Writer;
+const StringHashSet = std.StringHashMap(void);
 
-const LOGGING = @import("main.zig").LOGGING;
+const main = @import("main.zig");
+const LOGGING = main.LOGGING;
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 
 // Application > Abstraction
 pub const Token = struct {
@@ -33,11 +36,7 @@ pub const Token = struct {
 
 const Identifier = []const u8;
 
-const ParseError = error{
-    UnexpectedToken,
-    ReachedStartOfHistory,
-    CannotAdvancePastEOF,
-} || Allocator.Error;
+const ParseError = error{ UnexpectedToken, ReachedStartOfHistory, CannotAdvancePastEOF, AmbiguousAbstraction } || Allocator.Error;
 
 const Abstraction = struct {
     of: Identifier,
@@ -291,15 +290,16 @@ pub const Parser = struct {
         return ignored;
     }
 
-    pub fn expr(self: *Self) ParseError!?*Expression {
+    fn expr_aux(self: *Self, abstracted_ids: *StringHashSet) ParseError!?*Expression {
         while (try self.ignore_space() or try self.ignore_newlines()) {}
-        var _expr = if (try self.atom()) |_atom| _atom else {
+        var _expr = if (try self.atom(abstracted_ids)) |_atom| _atom else {
             std.log.info("expr: null", .{});
             return null;
         };
+
         while ((try self.peek()).kind == .Space) {
             self.token_index += 1;
-            if (try self.atom()) |unwrapped_atom| {
+            if (try self.atom(abstracted_ids)) |unwrapped_atom| {
                 const new_expr = try self.allocator.create(Expression);
                 new_expr.* = .{
                     .Application = .{
@@ -323,7 +323,14 @@ pub const Parser = struct {
         return _expr;
     }
 
-    fn atom(self: *Self) ParseError!?*Expression {
+    pub fn expr(self: *Self) ParseError!?*Expression {
+        var abstracted_ids = StringHashSet.init(gpa.allocator());
+        defer abstracted_ids.deinit();
+
+        return expr_aux(self, &abstracted_ids);
+    }
+
+    fn atom(self: *Self, abstracted_ids: *StringHashSet) ParseError!?*Expression {
         const _peek = try self.peek();
         switch (_peek.kind) {
             .Identifier => |lexeme| {
@@ -336,7 +343,7 @@ pub const Parser = struct {
             .LBrace => {
                 std.log.info("atom: '('", .{});
                 self.token_index += 1;
-                const _expr = if (try self.expr()) |_expr| _expr else {
+                const _expr = if (try self.expr_aux(abstracted_ids)) |_expr| _expr else {
                     std.log.err("Expected an expression but got {any}", .{(try self.peek()).kind});
                     return error.UnexpectedToken;
                 };
@@ -367,7 +374,16 @@ pub const Parser = struct {
                     return error.UnexpectedToken;
                 }
                 std.log.info("atom: '.'", .{});
-                const _expr = if (try self.expr()) |_expr| _expr else {
+
+                if (abstracted_ids.contains(_lexeme)) {
+                    std.log.err("An identifier with the name '{s}' has already been abstracted from the current expression.", .{_lexeme});
+                    std.log.info("Please change the name of the variable to something that is not already used in the expression.", .{});
+                    return ParseError.AmbiguousAbstraction;
+                } else {
+                    try abstracted_ids.putNoClobber(_lexeme, {});
+                }
+
+                const _expr = if (try self.expr_aux(abstracted_ids)) |_expr| _expr else {
                     std.log.err("Expected an expression but got {any}", .{(try self.peek()).kind});
                     return error.UnexpectedToken;
                 };
