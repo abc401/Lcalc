@@ -1,16 +1,47 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const Writer = std.fs.File.Writer;
 const StringHashSet = std.StringHashMap(void);
+const File = std.fs.File;
+const Expression = @import("expr.zig").Expression;
 
 const main = @import("main.zig");
 const LOGGING = main.LOGGING;
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+var gpa = main.GeneralPurposeAllocator{};
 
-// Application > Abstraction
+pub const Location = struct {
+    source: []const u8,
+    start: usize = 0,
+    end: usize = 0,
+
+    const Self = @This();
+
+    // TODO: Change all the places where Location.NULL is used to use
+    // an actual nullable i.e. '?Location'
+
+    // The following is a sentinal value that represents null for this struct.
+    pub const NULL = Self.new(source: {
+        var slice: []const u8 = undefined;
+        slice.ptr = @ptrFromInt(@as(usize, 1));
+        slice.len = 0;
+        break :source slice;
+    }, 0, 0);
+
+    pub fn new(source: []const u8, start: usize, end: usize) Self {
+        return .{
+            .source = source,
+            .start = start,
+            .end = end,
+        };
+    }
+
+    pub fn lexeme(self: *const Self) []const u8 {
+        return self.source[self.start..self.end];
+    }
+};
+
 pub const Token = struct {
     const Kind = union(enum) {
-        Identifier: []const u8,
+        Identifier,
         BackSlash,
 
         Dot,
@@ -27,192 +58,41 @@ pub const Token = struct {
 
     kind: Kind,
 
-    fn new(kind: Kind) Self {
+    loc: Location,
+
+    fn new(kind: Kind, source: []const u8, start: usize, len: usize) Self {
         return .{
             .kind = kind,
+            .loc = .{
+                .source = source,
+                .start = start,
+                .end = start + len,
+            },
         };
     }
-};
 
-const Identifier = []const u8;
-
-const ParseError = error{ UnexpectedToken, ReachedStartOfHistory, CannotAdvancePastEOF, AmbiguousAbstraction } || Allocator.Error;
-
-const Abstraction = struct {
-    of: Identifier,
-    over: *Expression,
-};
-
-const Application = struct {
-    of: *Expression,
-    to: *Expression,
-};
-
-pub const Expression = union(enum) {
-    Identifier: Identifier,
-    Abstraction: Abstraction,
-    Application: Application,
-
-    const Self = @This();
-
-    pub fn init(allocator: Allocator) !*Self {
-        return try allocator.create(Self);
+    fn newParser(kind: Kind, parser: *const Parser, len: usize) Self {
+        return .{
+            .kind = kind,
+            .loc = .{
+                .source = parser.source,
+                .start = parser.char_index,
+                .end = parser.char_index + len,
+            },
+        };
     }
 
-    pub fn deinit(self: *Self, allocator: Allocator) void {
-        switch (self.*) {
-            .Identifier => {
-                allocator.destroy(self);
-            },
-            .Abstraction => |abs| {
-                const over = abs.over;
-                defer over.deinit();
-
-                allocator.destroy(self);
-            },
-            .Application => |app| {
-                const of = app.of;
-                defer of.deinit();
-
-                const to = app.to;
-                defer to.deinit();
-
-                allocator.destroy(self);
-            },
-        }
-    }
-
-    pub fn deep_copy(self: *Self, allocator: Allocator) !*Self {
-        switch (self.*) {
-            .Identifier => {
-                const ident = try allocator.create(Self);
-                ident.* = self.*;
-                return ident;
-            },
-            .Abstraction => |abs| {
-                const new_abs = try allocator.create(Self);
-                new_abs.* = .{ .Abstraction = .{
-                    .of = abs.of,
-                    .over = try abs.over.deep_copy(allocator),
-                } };
-                return new_abs;
-            },
-            .Application => |app| {
-                const new_app = try allocator.create(Self);
-                new_app.* = .{ .Application = .{
-                    .of = try app.of.deep_copy(allocator),
-                    .to = try app.to.deep_copy(allocator),
-                } };
-                return new_app;
-            },
-        }
-    }
-
-    fn replace(self: *Self, target: []const u8, with: *Expression, allocator: Allocator) !*Expression {
-        switch (self.*) {
-            .Identifier => |ident| {
-                if (std.mem.eql(u8, ident, target)) {
-                    return try with.deep_copy(allocator);
-                } else {
-                    return try self.deep_copy(allocator);
-                }
-            },
-            .Abstraction => |abs| {
-                const replaced = try abs.over.replace(target, with, allocator);
-                const result = try allocator.create(Self);
-                result.* = .{ .Abstraction = .{
-                    .of = abs.of,
-                    .over = replaced,
-                } };
-                return result;
-            },
-            .Application => |app| {
-                const of_replaced = try app.of.replace(target, with, allocator);
-                const to_replaced = try app.to.replace(target, with, allocator);
-                const result = try allocator.create(Self);
-                result.* = .{ .Application = .{
-                    .of = of_replaced,
-                    .to = to_replaced,
-                } };
-                return result;
-            },
-        }
-    }
-
-    pub fn beta_reduce(self: *Self, allocator: Allocator) !*Expression {
-        switch (self.*) {
-            .Application => |app| {
-                switch (app.of.*) {
-                    .Abstraction => |abs| {
-                        return try abs.over.replace(abs.of, app.to, allocator);
-                    },
-                    else => {
-                        const reduced = try allocator.create(Self);
-                        reduced.* = .{ .Application = .{
-                            .of = try app.of.beta_reduce(allocator),
-                            .to = try app.to.beta_reduce(allocator),
-                        } };
-                        return reduced;
-                    },
-                }
-            },
-            else => {
-                return try self.deep_copy(allocator);
-            },
-        }
-    }
-
-    pub fn write(self: *const Self, writer: Writer) !void {
-        try self.write_aux(&writer);
-        _ = try writer.write("\n");
-    }
-    pub fn serialize(self: *const Self, writer: Writer) !void {
-        try self.serialize_aux(&writer);
-        _ = try writer.write("\n");
-    }
-
-    fn write_aux(self: *const Self, writer: *const Writer) !void {
-        switch (self.*) {
-            .Identifier => |lexeme| {
-                _ = try writer.print("({s})", .{lexeme});
-            },
-            .Abstraction => |abstraction| {
-                _ = try writer.write("(\\");
-                _ = try writer.print("{s}", .{abstraction.of});
-                _ = try writer.write(". ");
-                _ = try abstraction.over.write_aux(writer);
-                _ = try writer.write(")");
-            },
-            .Application => |application| {
-                _ = try writer.write("(");
-                _ = try application.of.write_aux(writer);
-                _ = try writer.write(" ");
-                _ = try application.to.write_aux(writer);
-                _ = try writer.write(")");
-            },
-        }
-    }
-
-    fn serialize_aux(self: *const Self, writer: *const Writer) !void {
-        switch (self.*) {
-            .Identifier => |lexeme| {
-                _ = try writer.print("{s}", .{lexeme});
-            },
-            .Abstraction => |abstraction| {
-                _ = try writer.print("Abs({s}, ", .{abstraction.of});
-                _ = try abstraction.over.serialize_aux(writer);
-                _ = try writer.write(")");
-            },
-            .Application => |application| {
-                _ = try writer.write("App(");
-                _ = try application.of.serialize_aux(writer);
-                _ = try writer.write(", ");
-                _ = try application.to.serialize_aux(writer);
-                _ = try writer.write(")");
-            },
-        }
+    fn lexeme(self: *const Self) []const u8 {
+        return self.loc.lexeme();
     }
 };
+
+const ParseError = error{
+    UnexpectedToken,
+    ReachedStartOfHistory,
+    CannotAdvancePastEOF,
+    AmbiguousAbstraction,
+} || Allocator.Error;
 
 const special_chars = "\\.=() \n\r";
 fn is_special_char(char: u8) bool {
@@ -229,7 +109,8 @@ pub const Parser = struct {
     const Tokens = std.ArrayList(Token);
 
     source: []const u8,
-    token_index: u32,
+    char_index: usize,
+    token_index: usize,
     tokens: Tokens,
     ast: ?*Expression,
     allocator: Allocator,
@@ -237,6 +118,7 @@ pub const Parser = struct {
     pub fn init(source: []const u8, tokens_list: Tokens, ast_allocator: Allocator) !Self {
         return .{
             .source = source,
+            .char_index = 0,
             .token_index = 0,
             .tokens = tokens_list,
             .ast = null,
@@ -249,7 +131,7 @@ pub const Parser = struct {
     }
 
     fn eof(self: *Self) bool {
-        return self.source.len == 0;
+        return self.char_index >= self.source.len;
     }
 
     fn advance_source(self: *Self) !void {
@@ -257,8 +139,7 @@ pub const Parser = struct {
             return error.CannotAdvancePastEOF;
         }
         if (!self.eof()) {
-            self.source.ptr += 1;
-            self.source.len -= 1;
+            self.char_index += 1;
         }
     }
 
@@ -299,18 +180,25 @@ pub const Parser = struct {
 
         while ((try self.peek()).kind == .Space) {
             self.token_index += 1;
-            if (try self.atom(abstracted_ids)) |unwrapped_atom| {
+            if (try self.atom(abstracted_ids)) |_atom| {
                 const new_expr = try self.allocator.create(Expression);
                 new_expr.* = .{
-                    .Application = .{
-                        .of = _expr,
-                        .to = unwrapped_atom,
+                    .kind = .{
+                        .Application = .{
+                            .of = _expr,
+                            .to = _atom,
+                        },
                     },
+                    .loc = Location.new(
+                        self.source,
+                        _expr.loc.start,
+                        _atom.loc.end,
+                    ),
                 };
                 _expr = new_expr;
             } else {
-                const _peek1 = try self.peek();
-                if (_peek1.kind == .Newline or _peek1.kind == .EOF) {
+                const newline_of_eof = try self.peek();
+                if (newline_of_eof.kind == .Newline or newline_of_eof.kind == .EOF) {
                     std.log.info("expr: newline | eof", .{});
                     self.token_index += 1;
                     break;
@@ -333,11 +221,14 @@ pub const Parser = struct {
     fn atom(self: *Self, abstracted_ids: *StringHashSet) ParseError!?*Expression {
         const _peek = try self.peek();
         switch (_peek.kind) {
-            .Identifier => |lexeme| {
-                std.log.info("atom: {s}", .{lexeme});
+            .Identifier => {
+                std.log.info("atom: {s}", .{_peek.lexeme()});
                 self.token_index += 1;
                 const _ident = try self.allocator.create(Expression);
-                _ident.* = .{ .Identifier = lexeme };
+                _ident.* = .{
+                    .kind = .Identifier,
+                    .loc = _peek.loc,
+                };
                 return _ident;
             },
             .LBrace => {
@@ -347,55 +238,62 @@ pub const Parser = struct {
                     std.log.err("Expected an expression but got {any}", .{(try self.peek()).kind});
                     return error.UnexpectedToken;
                 };
-                const _peek1 = try self.next();
-                if (_peek1.kind == .RBrace) {
+                const rbrace = try self.next();
+                if (rbrace.kind == .RBrace) {
                     std.log.info("atom: ')'", .{});
+                    // if (_expr.kind != .Identifier) {
+                    //     _expr.loc.start = _peek.loc.start;
+                    //     _expr.loc.end = rbrace.loc.end;
+                    // }
                     return _expr;
                 } else {
-                    std.log.err("Expected ')' but got {any}", .{_peek1.kind});
+                    std.log.err("Expected ')' but got {any}", .{rbrace.kind});
                     return error.UnexpectedToken;
                 }
             },
             .BackSlash => {
                 std.log.info("atom: '\\'", .{});
                 self.token_index += 1;
-                const _peek1 = try self.next();
-                const _lexeme = switch (_peek1.kind) {
-                    .Identifier => |lexeme| lexeme,
-                    else => {
-                        std.log.err("Expected identifier but got {any}", .{_peek1.kind});
-                        return error.UnexpectedToken;
-                    },
-                };
-                std.log.info("atom: {s}", .{_lexeme});
-                const _peek2 = try self.next();
-                if (_peek2.kind != .Dot) {
-                    std.log.err("Expected '.' but got {any}", .{_peek2.kind});
+                const ident = try self.next();
+                if (ident.kind != .Identifier) {
+                    std.log.err("Expected identifier but got {any}", .{ident.kind});
+                    return error.UnexpectedToken;
+                }
+                std.log.info("atom: {s}", .{ident.lexeme()});
+                const dot = try self.next();
+                if (dot.kind != .Dot) {
+                    std.log.err("Expected '.' but got {any}", .{dot.kind});
                     return error.UnexpectedToken;
                 }
                 std.log.info("atom: '.'", .{});
 
-                if (abstracted_ids.contains(_lexeme)) {
-                    std.log.err("An identifier with the name '{s}' has already been abstracted from the current expression.", .{_lexeme});
+                if (abstracted_ids.contains(ident.lexeme())) {
+                    std.log.err("The identifier '{s}' has already been abstracted from the current expression.", .{ident.lexeme()});
                     std.log.info("Please change the name of the variable to something that is not already used in the expression.", .{});
                     return ParseError.AmbiguousAbstraction;
-                } else {
-                    try abstracted_ids.putNoClobber(_lexeme, {});
                 }
+                try abstracted_ids.putNoClobber(ident.lexeme(), {});
 
                 const _expr = if (try self.expr_aux(abstracted_ids)) |_expr| _expr else {
                     std.log.err("Expected an expression but got {any}", .{(try self.peek()).kind});
                     return error.UnexpectedToken;
                 };
 
-                const _abstraction = try self.allocator.create(Expression);
-                _abstraction.* = .{
-                    .Abstraction = .{
-                        .of = _lexeme,
-                        .over = _expr,
+                const abs = try self.allocator.create(Expression);
+                abs.* = .{
+                    .kind = .{
+                        .Abstraction = .{
+                            .of = ident.loc,
+                            .over = _expr,
+                        },
                     },
+                    .loc = Location.new(
+                        self.source,
+                        _peek.loc.start,
+                        _expr.loc.end,
+                    ),
                 };
-                return _abstraction;
+                return abs;
             },
             else => {
                 return null;
@@ -409,6 +307,7 @@ pub const Parser = struct {
 
     pub fn peek(self: *Self) !Token {
         while (self.token_index >= self.tokens.items.len) {
+            std.log.info("Needed to tokenize.", .{});
             try self.tokenize();
         }
         const token = self.tokens.items[self.token_index];
@@ -418,6 +317,7 @@ pub const Parser = struct {
 
     pub fn next(self: *Self) !Token {
         while (self.token_index >= self.tokens.items.len) {
+            std.log.info("Needed to tokenize.", .{});
             try self.tokenize();
         }
         const token = self.tokens.items[self.token_index];
@@ -435,59 +335,63 @@ pub const Parser = struct {
 
     fn tokenize(self: *Self) !void {
         if (self.eof()) {
-            try self.push_to_history(Token.new(.EOF));
+            try self.push_to_history(Token.newParser(.EOF, self, 0));
             return;
         }
 
-        while (self.source[0] == '\r') {
+        while (self.source[self.char_index] == '\r') {
             try self.advance_source();
             if (self.eof()) {
-                try self.push_to_history(Token.new(.EOF));
+                try self.push_to_history(Token.newParser(.EOF, self, 0));
                 return;
             }
         }
 
-        switch (self.source[0]) {
+        switch (self.source[self.char_index]) {
             '\\' => {
                 try self.advance_source();
-                try self.push_to_history(Token.new(.BackSlash));
+                try self.push_to_history(Token.newParser(.BackSlash, self, 1));
             },
             '.' => {
                 try self.advance_source();
-                try self.push_to_history(Token.new(.Dot));
+                try self.push_to_history(Token.newParser(.Dot, self, 1));
             },
             '=' => {
                 try self.advance_source();
-                try self.push_to_history(Token.new(.Equals));
+                try self.push_to_history(Token.newParser(.Equals, self, 1));
             },
             '(' => {
                 try self.advance_source();
-                try self.push_to_history(Token.new(.LBrace));
+                try self.push_to_history(Token.newParser(.LBrace, self, 1));
             },
             ')' => {
                 try self.advance_source();
-                try self.push_to_history(Token.new(.RBrace));
+                try self.push_to_history(Token.newParser(.RBrace, self, 1));
             },
             '\n' => {
                 try self.advance_source();
-                try self.push_to_history(Token.new(.Newline));
+                try self.push_to_history(Token.newParser(.Newline, self, 1));
             },
             '\t', ' ' => {
-                while (!self.eof() and (self.source[0] == ' ' or self.source[0] == '\t')) {
+                var len: usize = 0;
+                const start = self.char_index;
+                while (!self.eof() and (self.source[self.char_index] == ' ' or self.source[self.char_index] == '\t')) {
+                    len += 1;
                     try self.advance_source();
                 }
-                try self.push_to_history(Token.new(.Space));
+                try self.push_to_history(Token.new(.Space, self.source, start, len));
             },
             else => {
-                var lexeme: []const u8 = self.source[0..0];
-                while (!self.eof() and !is_special_char(self.source[0])) {
+                const start = self.char_index;
+                var len: usize = 0;
+                while (!self.eof() and !is_special_char(self.source[self.char_index])) {
                     try self.advance_source();
-                    lexeme.len += 1;
+                    len += 1;
                 }
-                if (lexeme.len == 0) {
+                if (len == 0) {
                     return error.UnexpectedToken;
                 }
-                try self.push_to_history(Token.new(.{ .Identifier = lexeme }));
+                try self.push_to_history(Token.new(.Identifier, self.source, start, len));
             },
         }
 

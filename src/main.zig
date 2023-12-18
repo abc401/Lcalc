@@ -1,10 +1,11 @@
 const std = @import("std");
 const parser = @import("parser.zig");
 const File = std.fs.File;
+const Allocator = std.mem.Allocator;
 
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+pub const GeneralPurposeAllocator = std.heap.GeneralPurposeAllocator(.{});
+var gpa = GeneralPurposeAllocator{};
 
-pub const LOGGING = false;
 pub var args: [][:0]u8 = undefined;
 
 fn usage(file: File) !void {
@@ -14,47 +15,59 @@ fn usage(file: File) !void {
 
 pub fn main() !void {
     const stderr = std.io.getStdErr();
+    _ = stderr;
     const stdout = std.io.getStdOut();
+    const stdin = std.io.getStdIn();
+
+    const iStream = stdin.reader();
+    const oStream = stdout.writer();
 
     _ = try stdout.write("\nBegin\n\n");
     defer _ = stdout.write("\nEnd\n") catch 0;
 
     const allocator = gpa.allocator();
-    args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    // args = try std.process.argsAlloc(allocator);
+    // defer std.process.argsFree(allocator, args);
 
-    if (args.len != 2) {
-        std.log.err("Incorrect usage!", .{});
-        try usage(stderr);
-        return;
-    }
+    // if (args.len != 2) {
+    //     std.log.err("Incorrect usage!", .{});
+    //     try usage(stderr);
+    //     return;
+    // }
 
-    const inputfilename = args[1];
-    const inputfile = try std.fs.cwd().openFile(inputfilename, .{});
-    const metadata = try inputfile.metadata();
-    const size = metadata.size();
+    // const inputfilename = args[1];
+    // const inputfile = try std.fs.cwd().openFile(inputfilename, .{});
+    // const metadata = try inputfile.metadata();
+    // const size = metadata.size();
 
-    var input = try allocator.alloc(u8, size);
-    defer allocator.free(input);
+    // var input = try allocator.alloc(u8, size);
+    // defer allocator.free(input);
 
-    const bytesRead = try inputfile.read(input);
-    try std.testing.expect(bytesRead == size);
+    // const bytesRead = try inputfile.read(input);
+    // try std.testing.expect(bytesRead == size);
 
-    var tokenList = std.ArrayList(parser.Token).init(allocator);
-    var _parser = try parser.Parser.init(input, tokenList, allocator);
-    defer _parser.deinit();
+    outer: while (true) {
+        var input = std.ArrayList(u8).init(allocator);
+        try oStream.print("\n> ", .{});
+        try iStream.streamUntilDelimiter(input.writer(), '\n', null);
 
-    while (true) {
-        const expr = if (try _parser.expr()) |expr| expr else {
-            break;
-        };
+        var tokenList = std.ArrayList(parser.Token).init(allocator);
+        var _parser = try parser.Parser.init(input.items, tokenList, allocator);
+        defer _parser.deinit();
 
-        try expr.serialize(stdout.writer());
-        const beta_reduced = try expr.beta_reduce(allocator);
-        try beta_reduced.write(stdout.writer());
+        const writer = stdout.writer();
+        while (true) {
+            const expr = if (_parser.expr() catch continue :outer) |expr| expr else {
+                break;
+            };
 
-        if ((try _parser.next()).kind == .EOF) {
-            break;
+            try writer.print("\toriginal: {srl}\n", .{expr});
+            const beta_reduced = try expr.beta_reduce(allocator);
+            try writer.print("\treduced: {wr}\n", .{beta_reduced});
+
+            if ((try _parser.next()).kind == .EOF) {
+                break;
+            }
         }
     }
 }
