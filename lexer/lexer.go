@@ -8,16 +8,17 @@ import (
 
 type TokenKind string
 
-var SpecialChars = []byte{'.', '\\'}
+var SpecialChars = []byte{'.', '\\', '\n'}
 
 const (
 	EndOfFile   TokenKind = "EndOfFile"
 	StartOfFile TokenKind = "StartOfFile"
 
-	Slash TokenKind = "Slash"
-	Dot   TokenKind = "Dot"
-	Ident TokenKind = "Ident"
-	Space TokenKind = "Space"
+	Slash   TokenKind = "Slash"
+	Dot     TokenKind = "Dot"
+	Ident   TokenKind = "Ident"
+	Space   TokenKind = "Space"
+	NewLine TokenKind = "NewLine"
 )
 
 type Token struct {
@@ -65,31 +66,23 @@ func (lexer *Lexer) PeekCh() rune {
 }
 
 func (lexer *Lexer) Lex() {
+	newPeekToken := Token{}
 	peekCh := lexer.PeekCh()
 
 	if peekCh == '\x00' {
-		lexer.PeekToken = &Token{
-			Kind:   EndOfFile,
-			Lexeme: nil,
-		}
+		newPeekToken.Kind = EndOfFile
 
+	} else if peekCh == '\n' {
+		newPeekToken.Kind = NewLine
+		lexer.advance()
 	} else if peekCh == '\\' {
-		lexer.PeekToken = &Token{
-			Kind:   Slash,
-			Lexeme: nil,
-		}
+		newPeekToken.Kind = Slash
 		lexer.advance()
 	} else if peekCh == '.' {
-		lexer.PeekToken = &Token{
-			Kind:   Dot,
-			Lexeme: nil,
-		}
+		newPeekToken.Kind = Dot
 		lexer.advance()
 	} else if unicode.IsSpace(peekCh) {
-		lexer.PeekToken = &Token{
-			Kind:   Space,
-			Lexeme: nil,
-		}
+		newPeekToken.Kind = Space
 
 		for unicode.IsSpace(lexer.PeekCh()) {
 			lexer.advance()
@@ -102,11 +95,9 @@ func (lexer *Lexer) Lex() {
 			peekCh = lexer.PeekCh()
 
 		}
-		lexer.PeekToken = &Token{
-			Kind:   Ident,
-			Lexeme: lexer.Source[start:lexer.loc],
-		}
-
+		newPeekToken.Kind = Ident
+		newPeekToken.Lexeme = lexer.Source[start:lexer.loc]
 	}
 
+	lexer.PeekToken = &newPeekToken
 }
