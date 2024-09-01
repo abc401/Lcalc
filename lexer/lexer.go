@@ -3,12 +3,15 @@ package lexer
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"unicode"
+
+	"github.com/abc401/lcalc/predicates"
 )
 
 type TokenKind string
 
-var SpecialChars = []byte{'.', '\\', '\n'}
+var SpecialChars = []byte{'.', '\\', '\n', ')', '('}
 
 const (
 	EndOfFile   TokenKind = "EndOfFile"
@@ -17,30 +20,31 @@ const (
 	Slash   TokenKind = "Slash"
 	Dot     TokenKind = "Dot"
 	Ident   TokenKind = "Ident"
-	Space   TokenKind = "Space"
 	NewLine TokenKind = "NewLine"
+	LBrace  TokenKind = "LBrace"
+	RBrace  TokenKind = "RBrace"
 )
 
 type Token struct {
 	Kind   TokenKind
-	Lexeme []byte
+	Lexeme *string
 }
 
 func (token *Token) Dump() string {
 	if token.Kind == Ident {
-		return fmt.Sprintf("Ident(%s)", token.Lexeme)
+		return fmt.Sprintf("Ident(%s)", *token.Lexeme)
 	}
 	return string(token.Kind)
 
 }
 
 type Lexer struct {
-	Source    []byte
+	Source    string
 	loc       int
 	PeekToken *Token
 }
 
-func NewLexer(source []byte) Lexer {
+func NewLexer(source string) Lexer {
 	return Lexer{
 		Source: source,
 		PeekToken: &Token{
@@ -65,13 +69,23 @@ func (lexer *Lexer) PeekCh() rune {
 	return rune(lexer.Source[lexer.loc])
 }
 
+func (lexer *Lexer) SkipSpace() {
+	for predicates.IsSpace(lexer.PeekCh()) {
+		lexer.advance()
+	}
+}
+
 func (lexer *Lexer) Lex() {
+	if lexer.PeekToken.Kind == EndOfFile {
+		return
+	}
+
+	lexer.SkipSpace()
 	newPeekToken := Token{}
 	peekCh := lexer.PeekCh()
 
 	if peekCh == '\x00' {
 		newPeekToken.Kind = EndOfFile
-
 	} else if peekCh == '\n' {
 		newPeekToken.Kind = NewLine
 		lexer.advance()
@@ -81,12 +95,12 @@ func (lexer *Lexer) Lex() {
 	} else if peekCh == '.' {
 		newPeekToken.Kind = Dot
 		lexer.advance()
-	} else if unicode.IsSpace(peekCh) {
-		newPeekToken.Kind = Space
-
-		for unicode.IsSpace(lexer.PeekCh()) {
-			lexer.advance()
-		}
+	} else if peekCh == '(' {
+		newPeekToken.Kind = LBrace
+		lexer.advance()
+	} else if peekCh == ')' {
+		newPeekToken.Kind = RBrace
+		lexer.advance()
 	} else if unicode.IsGraphic(lexer.PeekCh()) {
 		start := lexer.loc
 		peekCh = lexer.PeekCh()
@@ -96,7 +110,10 @@ func (lexer *Lexer) Lex() {
 
 		}
 		newPeekToken.Kind = Ident
-		newPeekToken.Lexeme = lexer.Source[start:lexer.loc]
+		var b = lexer.Source[start:lexer.loc]
+		newPeekToken.Lexeme = &b
+	} else {
+		log.Panicf("Unhandled character: %c", peekCh)
 	}
 
 	lexer.PeekToken = &newPeekToken

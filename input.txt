@@ -1,2 +1,2 @@
-\x. x \x. y     a
-\x
+a b c d (e f)
+(\x. x) (y)
