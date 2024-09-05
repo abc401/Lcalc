@@ -15,7 +15,7 @@ var (
 	ErrNotFound            = errors.New("Couldn't find the construct that you asked for")
 	ErrIncorrectSyntax     = errors.New("You used the wrong syntax")
 	ErrParsedSomethingElse = errors.New("Parsed something other than was asked")
-	ErrEOF 				   = errors.New("End of file")
+	ErrEOF                 = errors.New("End of file")
 )
 
 type Expr struct {
@@ -29,14 +29,14 @@ func NilExpr() Expr {
 }
 
 func (expr Expr) DumpToString() string {
-	
+
 	if app, ok := expr.Application(); ok {
 		return "(" + app.Of.DumpToString() + " " + app.To.DumpToString() + ")"
 	}
 	if abs, ok := expr.Abstraction(); ok {
 		var str = "(\\"
 		for i, ident := range abs.Of {
-			if i == len(abs.Of) - 1 {
+			if i == len(abs.Of)-1 {
 				str += ident.DumpToString()
 			} else {
 				str += ident.DumpToString() + " "
@@ -121,7 +121,6 @@ func (parser *Parser) parseExprIdent() (*ExprIdent, error) {
 	var ident = _lexer.PeekToken
 
 	if ident.Kind != lexer.Ident {
-		fmt.Printf("[Error] parseExprIdent() not found, peek: %s\n", helpers.SPrettyPrint(_lexer.PeekToken))
 		return nil, ErrNotFound
 	}
 
@@ -156,14 +155,12 @@ func (parser *Parser) parseExprAbstraction() (Expr, error) {
 		fmt.Fprintln(os.Stderr, "[Error] No identifiers found after slash")
 		return NilExpr(), ErrIncorrectSyntax
 	}
-	fmt.Printf("idents: %s\n, peektoken: %s\n", helpers.SPrettyPrint(idents), helpers.SPrettyPrint(_lexer.PeekToken))
 	if _lexer.PeekToken.Kind != lexer.Dot {
 		fmt.Fprintf(os.Stderr, "[Error] Expected a `.` but got token kind: `%s`\n", _lexer.PeekToken.Kind)
 		return NilExpr(), ErrIncorrectSyntax
 	}
 	_lexer.Lex()
 
-	fmt.Printf("parsed dot, peektoken: %s\n", helpers.SPrettyPrint(_lexer.PeekToken))
 	var abstractionOver, err = parser.parseExpr()
 	if err == ErrNotFound {
 		fmt.Fprintf(os.Stderr, "[Error] Expected an expression but after abstracted identifiers but got `%s`", _lexer.PeekToken.Kind)
@@ -172,9 +169,8 @@ func (parser *Parser) parseExprAbstraction() (Expr, error) {
 		return NilExpr(), ErrIncorrectSyntax
 	}
 
-
 	var exprAbstraction = NewExpr(ExprAbstraction{
-		Of: idents,
+		Of:   idents,
 		From: abstractionOver,
 	})
 	return exprAbstraction, nil
@@ -184,7 +180,6 @@ func (parser *Parser) parseExprAbstraction() (Expr, error) {
 func (parser *Parser) parseExprApplication() (Expr, error) {
 	var ofExpr, err = parser.parseAtom()
 	if err != nil {
-		fmt.Printf("[parseExprApplication] parser.parseAtom(), err: %s\n", err)
 		return NilExpr(), err
 	}
 
@@ -222,8 +217,6 @@ func (parser *Parser) parseAtom() (Expr, error) {
 		var atom = NewExpr(*ident)
 		return atom, nil
 	}
-	
-	fmt.Printf("[parseAtom] parser.parseExprIdent(), err: %s\n", err)
 
 	var _lexer = parser.Lexer
 	if _lexer.PeekToken.Kind == lexer.LBrace {
@@ -266,16 +259,15 @@ func (parser *Parser) parseExpr() (Expr, error) {
 		return app, nil
 	} else if err == ErrIncorrectSyntax || err == ErrNotFound {
 		return NilExpr(), err
-	} 
+	}
 
 	log.Panic("Unreachable")
 	return NilExpr(), nil
 }
 
 func (parser *Parser) Parse() (Expr, error) {
-	// log.Panic("Not implemented")
 	var tokenKind = parser.Lexer.PeekToken.Kind
-	if  tokenKind == lexer.EndOfFile {
+	if tokenKind == lexer.EndOfFile {
 		return NilExpr(), ErrEOF
 	} else if tokenKind == lexer.NewLine {
 		for tokenKind == lexer.NewLine {
@@ -290,5 +282,4 @@ func (parser *Parser) Parse() (Expr, error) {
 	}
 
 	return expr, nil
-	// return NilExpr(), nil
 }
