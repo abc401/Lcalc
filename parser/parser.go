@@ -12,8 +12,8 @@ import (
 )
 
 var (
-	ErrNotFound            = errors.New("Couldn't find the construct that you asked for")
-	ErrIncorrectSyntax     = errors.New("You used the wrong syntax")
+	ErrNotFound            = errors.New("Not Found")
+	ErrSyntaxError         = errors.New("Syntax Error")
 	ErrParsedSomethingElse = errors.New("Parsed something other than was asked")
 	ErrEOF                 = errors.New("End of file")
 )
@@ -89,13 +89,19 @@ type ExprApplication struct {
 	To Expr
 }
 
+type Uniquifier uint
+
 type ExprIdent struct {
 	Lexeme     string
-	Uniquifier int
+	Uniquifier Uniquifier
+}
+
+func (ident ExprIdent) Equals(other ExprIdent) bool {
+	return ident.Lexeme == other.Lexeme && ident.Uniquifier == other.Uniquifier
 }
 
 func (ident *ExprIdent) DumpToString() string {
-	return ident.Lexeme + "_" + strconv.Itoa(ident.Uniquifier)
+	return ident.Lexeme + "_" + strconv.FormatUint(uint64(ident.Uniquifier), 10)
 }
 
 type ExprAbstraction struct {
@@ -116,23 +122,23 @@ func NewParser(_lexer *lexer.Lexer) *Parser {
 	}
 }
 
-func (parser *Parser) parseExprIdent() (*ExprIdent, error) {
-	var _lexer = parser.Lexer
-	var ident = _lexer.PeekToken
+// func (parser *Parser) parseExprIdent() (*ExprIdent, error) {
+// 	var _lexer = parser.Lexer
+// 	var ident = _lexer.PeekToken
 
-	if ident.Kind != lexer.Ident {
-		return nil, ErrNotFound
-	}
+// 	if ident.Kind != lexer.Ident {
+// 		return nil, ErrNotFound
+// 	}
 
-	_lexer.Lex()
+// 	_lexer.Lex()
 
-	return &ExprIdent{
-		Lexeme:     *ident.Lexeme,
-		Uniquifier: 0,
-	}, nil
-}
+// 	return &ExprIdent{
+// 		Lexeme:     *ident.Lexeme,
+// 		Uniquifier: 0,
+// 	}, nil
+// }
 
-func (parser *Parser) parseExprAbstraction() (Expr, error) {
+func (parser *Parser) parseExprAbstraction(scope Scope) (Expr, error) {
 	var _lexer = parser.Lexer
 
 	if _lexer.PeekToken.Kind != lexer.Slash {
@@ -144,29 +150,37 @@ func (parser *Parser) parseExprAbstraction() (Expr, error) {
 	var idents = []*ExprIdent{}
 
 	for {
-		var ident, err = parser.parseExprIdent()
-		if err != nil {
+		var identToken, ok = _lexer.LexIdent()
+		if !ok {
 			break
 		}
-		idents = append(idents, ident)
+		var ident = scope.CreateIdent(*identToken.Lexeme)
+		for _, val := range idents {
+			if val.Lexeme == ident.Lexeme {
+				fmt.Fprintf(os.Stderr, "[Error] Ident `%s` abstracted more than once at the same time.\n", ident.Lexeme)
+				return NilExpr(), ErrSyntaxError
+			}
+		}
+
+		idents = append(idents, &ident)
 	}
 
 	if len(idents) == 0 {
 		fmt.Fprintln(os.Stderr, "[Error] No identifiers found after slash")
-		return NilExpr(), ErrIncorrectSyntax
+		return NilExpr(), ErrSyntaxError
 	}
 	if _lexer.PeekToken.Kind != lexer.Dot {
 		fmt.Fprintf(os.Stderr, "[Error] Expected a `.` but got token kind: `%s`\n", _lexer.PeekToken.Kind)
-		return NilExpr(), ErrIncorrectSyntax
+		return NilExpr(), ErrSyntaxError
 	}
 	_lexer.Lex()
 
-	var abstractionOver, err = parser.parseExpr()
+	var abstractionOver, err = parser.parseExpr(scope)
 	if err == ErrNotFound {
 		fmt.Fprintf(os.Stderr, "[Error] Expected an expression but after abstracted identifiers but got `%s`", _lexer.PeekToken.Kind)
-		return NilExpr(), ErrIncorrectSyntax
+		return NilExpr(), ErrSyntaxError
 	} else if err != nil {
-		return NilExpr(), ErrIncorrectSyntax
+		return NilExpr(), ErrSyntaxError
 	}
 
 	var exprAbstraction = NewExpr(ExprAbstraction{
@@ -177,15 +191,34 @@ func (parser *Parser) parseExprAbstraction() (Expr, error) {
 
 }
 
-func (parser *Parser) parseExprApplication() (Expr, error) {
-	var ofExpr, err = parser.parseAtom()
+func (parser *Parser) parseAtomOrExprAbstraction(scope Scope) (Expr, error) {
+	var atom, err = parser.parseAtom(scope)
+	if err == nil {
+		return atom, nil
+	}
+	if err != ErrNotFound {
+		return NilExpr(), err
+	}
+
+	var abstraction Expr
+	abstraction, err = parser.parseExprAbstraction(scope)
+	if err == nil {
+		return abstraction, nil
+	}
+	return NilExpr(), err
+
+}
+
+func (parser *Parser) parseExprApplication(scope Scope) (Expr, error) {
+	var ofExpr, err = parser.parseAtom(scope)
 	if err != nil {
 		return NilExpr(), err
 	}
 
 	var toExpr Expr
 
-	toExpr, err = parser.parseAtom()
+	// toExpr, err = parser.parseAtom(scope)
+	toExpr, err = parser.parseAtomOrExprAbstraction(scope)
 	if err == ErrNotFound {
 		return ofExpr, ErrParsedSomethingElse
 	} else if err != nil {
@@ -199,7 +232,8 @@ func (parser *Parser) parseExprApplication() (Expr, error) {
 
 	for {
 		ofExpr = exprApp
-		toExpr, err = parser.parseAtom()
+		// toExpr, err = parser.parseAtom(scope)
+		toExpr, err = parser.parseAtomOrExprAbstraction(scope)
 		if err != nil {
 			break
 		}
@@ -211,23 +245,21 @@ func (parser *Parser) parseExprApplication() (Expr, error) {
 	return exprApp, nil
 }
 
-func (parser *Parser) parseAtom() (Expr, error) {
-	var ident, err = parser.parseExprIdent()
-	if err == nil {
-		var atom = NewExpr(*ident)
-		return atom, nil
+func (parser *Parser) parseAtom(scope Scope) (Expr, error) {
+	var _lexer = parser.Lexer
+	var identToken, ok = _lexer.LexIdent()
+	if ok {
+		var ident = scope.GetIdent(*identToken.Lexeme)
+		return NewExpr(ident), nil
 	}
 
-	var _lexer = parser.Lexer
 	if _lexer.PeekToken.Kind == lexer.LBrace {
 		_lexer.Lex()
 	} else {
 		return NilExpr(), ErrNotFound
 	}
 
-	var atom Expr
-
-	atom, err = parser.parseExpr()
+	var atom, err = parser.parseExpr(scope)
 	if err == ErrNotFound {
 		fmt.Fprintf(os.Stderr, "[Error] Expected an expression after `(` but got: `%s`\n", _lexer.PeekToken.Kind)
 		return NilExpr(), err
@@ -239,30 +271,27 @@ func (parser *Parser) parseAtom() (Expr, error) {
 		_lexer.Lex()
 	} else {
 		fmt.Fprintf(os.Stderr, "[Error] Expected `)` but got: `%s`\n", _lexer.PeekToken.Kind)
-		return NilExpr(), ErrIncorrectSyntax
+		return NilExpr(), ErrSyntaxError
 	}
 
 	return atom, nil
 }
 
-func (parser *Parser) parseExpr() (Expr, error) {
-	var abs, err = parser.parseExprAbstraction()
+func (parser *Parser) parseExpr(scope Scope) (Expr, error) {
+	var abs, err = parser.parseExprAbstraction(scope)
 	if err == nil {
 		return abs, nil
-	} else if err == ErrIncorrectSyntax {
-		return NilExpr(), nil
+	} else if err != ErrNotFound {
+		return abs, err
 	}
 
 	var app Expr
-	app, err = parser.parseExprApplication()
+	app, err = parser.parseExprApplication(scope)
 	if err == nil || err == ErrParsedSomethingElse {
 		return app, nil
-	} else if err == ErrIncorrectSyntax || err == ErrNotFound {
-		return NilExpr(), err
+	} else {
+		return app, err
 	}
-
-	log.Panic("Unreachable")
-	return NilExpr(), nil
 }
 
 func (parser *Parser) Parse() (Expr, error) {
@@ -276,7 +305,8 @@ func (parser *Parser) Parse() (Expr, error) {
 		}
 	}
 
-	var expr, err = parser.parseExpr()
+	var scope = NewScope()
+	var expr, err = parser.parseExpr(scope)
 	if err != nil {
 		return NilExpr(), err
 	}

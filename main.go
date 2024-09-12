@@ -27,17 +27,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println("[Info] Successfully opened file.\n")
+	fmt.Println("[Info] Successfully opened file.")
 
 	var l = lexer.NewLexer(string(contents))
 	var p = parser.NewParser(&l)
+
 	for {
 		expr, err := p.Parse()
 		if err == parser.ErrEOF {
 			break
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[Error] `%s`\n", err)
+			fmt.Fprintf(os.Stdout, "[Info] `%s`\n", err)
 			break
 		}
 

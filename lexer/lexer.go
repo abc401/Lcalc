@@ -55,6 +55,16 @@ func NewLexer(source string) Lexer {
 	}
 }
 
+func (lexer *Lexer) LexIdent() (*Token, bool) {
+	if lexer.PeekToken.Kind != Ident {
+		return nil, false
+	}
+	var ident = lexer.PeekToken
+	lexer.Lex()
+
+	return ident, true
+}
+
 func (lexer *Lexer) advance() {
 	if lexer.loc >= len(lexer.Source) {
 		return
