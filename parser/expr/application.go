@@ -23,3 +23,21 @@ func (app *Application) DumpToString() string {
 	}
 	return app.Of.DumpToString() + " " + app.To.DumpToString()
 }
+
+func (app *Application) Replace(targetIdent Ident, with Expr) Expr {
+	return &Application{
+		Of: app.Of.Replace(targetIdent, with),
+		To: app.To.Replace(targetIdent, with),
+	}
+}
+
+func (app *Application) Eval() Expr {
+	var abs, absOk = app.Of.(*Abstraction)
+	if !absOk {
+		return &Application{
+			Of: app.Of.Eval(),
+			To: app.To.Eval(),
+		}
+	}
+	return abs.BetaReduce(app.To)
+}

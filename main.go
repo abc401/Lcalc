@@ -33,7 +33,7 @@ func main() {
 	var p = parser.NewParser(&l)
 
 	for {
-		expr, err := p.Parse()
+		_expr, err := p.Parse()
 		if err == parser.ErrEOF {
 			break
 		}
@@ -42,6 +42,7 @@ func main() {
 			break
 		}
 
-		fmt.Printf("[Info] Parsed: %s\n", expr.DumpToString())
+		fmt.Printf("[Info] Parsed: %s\n", _expr.DumpToString())
+		fmt.Printf("[Info] Evaluated: %s\n", _expr.Eval().DumpToString())
 	}
 }

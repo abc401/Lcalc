@@ -25,8 +25,12 @@ func (ident Ident) Equals(other Ident) bool {
 }
 
 func (ident *Ident) Replace(targetIdent Ident, with Expr) Expr {
-	if ident.Equals(targetIdent) {
+	if ident.Lexeme == targetIdent.Lexeme {
 		return with.DeepCopy()
 	}
+	return ident.DeepCopy()
+}
+
+func (ident *Ident) Eval() Expr {
 	return ident.DeepCopy()
 }
