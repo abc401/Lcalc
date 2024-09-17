@@ -33,6 +33,7 @@ func main() {
 	var p = parser.NewParser(&l)
 
 	for {
+
 		_expr, err := p.Parse()
 		if err == parser.ErrEOF {
 			break

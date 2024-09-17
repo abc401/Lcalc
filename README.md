@@ -1,3 +1,3 @@
 # Introduction
 
-A parser for untyped lambda calculus.
+A parser for [Lambda Calculus](https://en.wikipedia.org/wiki/Lambda_calculus)

@@ -6,7 +6,7 @@ import (
 	"log"
 	"unicode"
 
-	"github.com/abc401/lcalc/predicates"
+	"github.com/abc401/lcalc/helpers"
 )
 
 type TokenKind string
@@ -39,54 +39,79 @@ func (token *Token) Dump() string {
 }
 
 type Lexer struct {
-	Source    string
-	loc       int
-	PeekToken *Token
+	Source       string
+	peekChIdx    int
+	Tokens       []*Token
+	peekTokenIdx int
 }
 
 func NewLexer(source string) Lexer {
 	return Lexer{
 		Source: source,
-		PeekToken: &Token{
-			Kind:   StartOfFile,
-			Lexeme: nil,
-		},
-		loc: 0,
+		Tokens: []*Token{
+			{
+				Kind:   StartOfFile,
+				Lexeme: nil,
+			}},
+		peekTokenIdx: 0,
+		peekChIdx:    0,
 	}
 }
 
 func (lexer *Lexer) LexIdent() (*Token, bool) {
-	if lexer.PeekToken.Kind != Ident {
+	var peekToken = lexer.PeekToken()
+	if peekToken.Kind != Ident {
 		return nil, false
 	}
-	var ident = lexer.PeekToken
-	lexer.Lex()
+	var ident = peekToken
+	lexer.Advance()
 
 	return ident, true
 }
 
-func (lexer *Lexer) advance() {
-	if lexer.loc >= len(lexer.Source) {
+func (lexer *Lexer) advanceSrc() {
+	if lexer.peekChIdx >= len(lexer.Source) {
 		return
 	}
-	lexer.loc++
+	lexer.peekChIdx++
 }
 
 func (lexer *Lexer) PeekCh() rune {
-	if lexer.loc >= len(lexer.Source) {
+	if lexer.peekChIdx >= len(lexer.Source) {
 		return '\x00'
 	}
-	return rune(lexer.Source[lexer.loc])
+	return rune(lexer.Source[lexer.peekChIdx])
 }
 
 func (lexer *Lexer) SkipSpace() {
-	for predicates.IsSpace(lexer.PeekCh()) {
-		lexer.advance()
+	var ch = lexer.PeekCh()
+	for ch == ' ' || ch == '\t' || ch == '\r' {
+		lexer.advanceSrc()
+		ch = lexer.PeekCh()
 	}
 }
 
-func (lexer *Lexer) Lex() {
-	if lexer.PeekToken.Kind == EndOfFile {
+func (lexer *Lexer) PeekToken() *Token {
+	return lexer.Tokens[lexer.peekTokenIdx]
+}
+
+func (lexer *Lexer) Rewind() {
+	if lexer.peekTokenIdx == 0 {
+		return
+	}
+	if lexer.peekTokenIdx < 0 {
+		log.Panicf("[Lexer.Rewind] lexer.peekTokenIdx < 0\n\tLexer: %s", helpers.SPrettyPrint(lexer))
+	}
+	lexer.peekTokenIdx -= 1
+}
+
+func (lexer *Lexer) Advance() {
+	if lexer.PeekToken().Kind == EndOfFile {
+		return
+	}
+
+	if lexer.peekTokenIdx < len(lexer.Tokens)-1 {
+		lexer.peekTokenIdx += 1
 		return
 	}
 
@@ -98,33 +123,35 @@ func (lexer *Lexer) Lex() {
 		newPeekToken.Kind = EndOfFile
 	} else if peekCh == '\n' {
 		newPeekToken.Kind = NewLine
-		lexer.advance()
+		lexer.advanceSrc()
 	} else if peekCh == '\\' {
 		newPeekToken.Kind = Slash
-		lexer.advance()
+		lexer.advanceSrc()
 	} else if peekCh == '.' {
 		newPeekToken.Kind = Dot
-		lexer.advance()
+		lexer.advanceSrc()
 	} else if peekCh == '(' {
 		newPeekToken.Kind = LBrace
-		lexer.advance()
+		lexer.advanceSrc()
 	} else if peekCh == ')' {
 		newPeekToken.Kind = RBrace
-		lexer.advance()
+		lexer.advanceSrc()
 	} else if unicode.IsGraphic(lexer.PeekCh()) {
-		start := lexer.loc
+		start := lexer.peekChIdx
 		peekCh = lexer.PeekCh()
 		for unicode.IsGraphic(peekCh) && !unicode.IsSpace(peekCh) && !bytes.ContainsRune(SpecialChars, peekCh) {
-			lexer.advance()
+
+			lexer.advanceSrc()
 			peekCh = lexer.PeekCh()
 
 		}
 		newPeekToken.Kind = Ident
-		var b = lexer.Source[start:lexer.loc]
+		var b = lexer.Source[start:lexer.peekChIdx]
 		newPeekToken.Lexeme = &b
 	} else {
 		log.Panicf("Unhandled character: %c", peekCh)
 	}
 
-	lexer.PeekToken = &newPeekToken
+	lexer.Tokens = append(lexer.Tokens, &newPeekToken)
+	lexer.peekTokenIdx += 1
 }

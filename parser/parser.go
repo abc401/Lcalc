@@ -21,38 +21,22 @@ type Parser struct {
 }
 
 func NewParser(_lexer *lexer.Lexer) *Parser {
-	if _lexer.PeekToken.Kind == lexer.StartOfFile {
-		_lexer.Lex()
+	if _lexer.PeekToken().Kind == lexer.StartOfFile {
+		_lexer.Advance()
 	}
 	return &Parser{
 		Lexer: _lexer,
 	}
 }
 
-// func (parser *Parser) parseexpr.Ident() (*ExprIdent, error) {
-// 	var _lexer = parser.Lexer
-// 	var ident = _lexer.PeekToken
-
-// 	if ident.Kind != lexer.Ident {
-// 		return nil, ErrNotFound
-// 	}
-
-// 	_lexer.Lex()
-
-// 	return &expr.Ident{
-// 		Lexeme:     *ident.Lexeme,
-// 		Uniquifier: 0,
-// 	}, nil
-// }
-
 func (parser *Parser) parseExprAbstraction(scope Scope) (expr.Expr, error) {
 	var _lexer = parser.Lexer
 
-	if _lexer.PeekToken.Kind != lexer.Slash {
+	if _lexer.PeekToken().Kind != lexer.Slash {
 		return nil, ErrNotFound
 	}
 
-	_lexer.Lex()
+	_lexer.Advance()
 
 	var idents = []expr.Ident{}
 
@@ -76,15 +60,15 @@ func (parser *Parser) parseExprAbstraction(scope Scope) (expr.Expr, error) {
 		fmt.Fprintln(os.Stderr, "[Error] No identifiers found after slash")
 		return nil, ErrSyntaxError
 	}
-	if _lexer.PeekToken.Kind != lexer.Dot {
-		fmt.Fprintf(os.Stderr, "[Error] Expected a `.` but got token kind: `%s`\n", _lexer.PeekToken.Kind)
+	if _lexer.PeekToken().Kind != lexer.Dot {
+		fmt.Fprintf(os.Stderr, "[Error] Expected a `.` but got token kind: `%s`\n", _lexer.PeekToken().Kind)
 		return nil, ErrSyntaxError
 	}
-	_lexer.Lex()
+	_lexer.Advance()
 
 	var abstractionOver, err = parser.parseExpr(scope)
 	if err == ErrNotFound {
-		fmt.Fprintf(os.Stderr, "[Error] Expected an expression but after abstracted identifiers but got `%s`", _lexer.PeekToken.Kind)
+		fmt.Fprintf(os.Stderr, "[Error] Expected an expression but after abstracted identifiers but got `%s`", _lexer.PeekToken().Kind)
 		return nil, ErrSyntaxError
 	} else if err != nil {
 		return nil, ErrSyntaxError
@@ -116,6 +100,7 @@ func (parser *Parser) parseAtomOrExprAbstraction(scope Scope) (expr.Expr, error)
 }
 
 func (parser *Parser) parseExprApplication(scope Scope) (expr.Expr, error) {
+
 	var ofExpr, err = parser.parseAtom(scope)
 	if err != nil {
 		return nil, err
@@ -159,24 +144,24 @@ func (parser *Parser) parseAtom(scope Scope) (expr.Expr, error) {
 		return &ident, nil
 	}
 
-	if _lexer.PeekToken.Kind == lexer.LBrace {
-		_lexer.Lex()
+	if _lexer.PeekToken().Kind == lexer.LBrace {
+		_lexer.Advance()
 	} else {
 		return nil, ErrNotFound
 	}
 
 	var atom, err = parser.parseExpr(scope)
 	if err == ErrNotFound {
-		fmt.Fprintf(os.Stderr, "[Error] Expected an expression after `(` but got: `%s`\n", _lexer.PeekToken.Kind)
+		fmt.Fprintf(os.Stderr, "[Error] Expected an expression after `(` but got: `%s`\n", _lexer.PeekToken().Kind)
 		return nil, err
 	} else if err != nil {
 		return nil, err
 	}
 
-	if _lexer.PeekToken.Kind == lexer.RBrace {
-		_lexer.Lex()
+	if _lexer.PeekToken().Kind == lexer.RBrace {
+		_lexer.Advance()
 	} else {
-		fmt.Fprintf(os.Stderr, "[Error] Expected `)` but got: `%s`\n", _lexer.PeekToken.Kind)
+		fmt.Fprintf(os.Stderr, "[Error] Expected `)` but got: `%s`\n", _lexer.PeekToken().Kind)
 		return nil, ErrSyntaxError
 	}
 
@@ -202,17 +187,18 @@ func (parser *Parser) parseExpr(scope Scope) (expr.Expr, error) {
 }
 
 func (parser *Parser) Parse() (expr.Expr, error) {
-	var tokenKind = parser.Lexer.PeekToken.Kind
+	var tokenKind = parser.Lexer.PeekToken().Kind
 	if tokenKind == lexer.EndOfFile {
 		return nil, ErrEOF
 	} else if tokenKind == lexer.NewLine {
 		for tokenKind == lexer.NewLine {
-			parser.Lexer.Lex()
-			tokenKind = parser.Lexer.PeekToken.Kind
+			parser.Lexer.Advance()
+			tokenKind = parser.Lexer.PeekToken().Kind
 		}
 	}
 
 	var scope = NewScope()
+
 	var expr, err = parser.parseExpr(scope)
 	if err != nil {
 		return nil, err
